@@ -21,6 +21,7 @@ pub struct MetaRecord {
 pub trait Meta {
     fn ds_get(&mut self, dsid: &str) -> Result<SafeDs>;
     fn ds_put(&mut self, r#type: &str, config: &str);
+    fn ds_del(&mut self, dsid: &str);
     fn ds_ls(&self) -> Vec<DataStorageRecord>;
 
     fn put(&mut self, meta: MetaRecord);

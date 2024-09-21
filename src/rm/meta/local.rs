@@ -81,6 +81,11 @@ impl Meta for Local {
             .execute("INSERT INTO rm (type, cfg) VALUES (?, ?)", [r#type, cfg])
             .expect("Failed to insert");
     }
+    fn ds_del(&mut self, dsid: &str) {
+        self.gid_conn
+            .execute("DELETE FROM rm WHERE id = ?", [dsid])
+            .expect("Failed to delete");
+    }
     fn ds_ls(&self) -> Vec<DataStorageRecord> {
         let mut stmt = self
             .gid_conn
@@ -88,7 +93,7 @@ impl Meta for Local {
             .expect("Failed to prepare statement");
         stmt.query_map([], |row| {
             Ok(DataStorageRecord {
-                id: row.get(0)?,
+                id: row.get::<usize, i32>(0)?.to_string(),
                 r#type: row.get(1)?,
                 cfg: row.get(2)?,
             })

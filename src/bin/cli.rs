@@ -11,19 +11,25 @@ static HOME: LazyLock<String> = LazyLock::new(|| {
         .to_string()
 });
 
-#[derive(Default, Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 struct Config {
     pub r#type: String,
     pub config: String,
 }
 
-fn load_or_default(path: &str) -> Config {
-    let mut f = xcfg::File::default().path(path);
-    if f.load().is_err() {
-        Config {
+impl Default for Config {
+    fn default() -> Self {
+        Self {
             r#type: "local".to_string(),
             config: HOME.clone() + "/.config/rm/local.sqlite3",
         }
+    }
+}
+
+fn load_or_default(path: &str) -> Config {
+    let mut f = xcfg::File::default().path(path);
+    if f.load().is_err() {
+        Config::default()
     } else {
         f.inner
     }
@@ -57,7 +63,13 @@ async fn main() {
         .subcommand_required(true)
         .arg_required_else_help(true)
         .subcommands(&[
-            Command::new("init").about("Initialize the database"),
+            Command::new("init")
+                .about("Initialize the configuration")
+                .subcommand(
+                    Command::new("default_config")
+                        .visible_alias("dc")
+                        .about("Print the default configuration"),
+                ),
             Command::new("ds")
                 .about("Data storage commands")
                 .subcommands(&[
@@ -65,6 +77,7 @@ async fn main() {
                         .visible_alias("ls")
                         .about("List data storages"),
                     Command::new("put")
+                        .visible_alias("p")
                         .about("Put a data storage")
                         .subcommands(&[Command::new("s3").about("Put an S3 data storage").args(&[
                             arg!(<region> "The S3 region"),
@@ -74,6 +87,10 @@ async fn main() {
                             arg!(<bucket> "The S3 bucket"),
                         ])])
                         .subcommand_required(true),
+                    Command::new("del")
+                        .visible_alias("d")
+                        .about("Delete a data storage")
+                        .args(&[arg!(<datastore_id> "The datastore ID")]),
                 ])
                 .arg_required_else_help(true)
                 .subcommand_required(true),
@@ -125,13 +142,20 @@ async fn main() {
         ])
         .arg(arg!(-c [config] "The configuration file").value_hint(clap::ValueHint::FilePath))
         .get_matches();
+    let default_path = HOME.clone() + "/.config/rm/config.toml";
     let config = load_or_default(
-        &cmd.get_one::<String>("config")
-            .cloned()
-            .unwrap_or(HOME.clone() + "/.config/rm/config.toml"),
+        cmd.get_one::<String>("config")
+            .map(|x| x.as_str())
+            .unwrap_or(&default_path),
     );
 
-    if cmd.subcommand_matches("init").is_some() {
+    if let Some(("init", cmd)) = cmd.subcommand() {
+        eprintln!("default_path: {}", default_path);
+        println!();
+        if let Some(("default_config", _)) = cmd.subcommand() {
+            println!("{}", toml::to_string(&Config::default()).unwrap());
+            return;
+        }
         init(&config.r#type, &config.config);
         return;
     }
@@ -160,6 +184,10 @@ async fn main() {
                     )
                     .await;
                 }
+            }
+            Some(("del", del)) => {
+                rm.ds_del(del.get_one::<String>("datastore_id").unwrap())
+                    .await;
             }
             _ => {}
         },

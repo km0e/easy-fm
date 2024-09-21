@@ -28,6 +28,10 @@ impl RM {
         self.meta.lock().await.ds_put(r#type, cfg);
     }
 
+    pub async fn ds_del(&mut self, dsid: &str) {
+        self.meta.lock().await.ds_del(dsid);
+    }
+
     pub async fn ds_ls(&self) -> Vec<DataStorageRecord> {
         self.meta.lock().await.ds_ls()
     }
