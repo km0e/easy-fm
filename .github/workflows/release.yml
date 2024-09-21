@@ -1,0 +1,89 @@
+name: "release"
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+jobs:
+  check-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hecrj/setup-rust-action@master
+        with:
+          rust-version: stable
+          components: clippy, rustfmt
+      - uses: actions/checkout@v4
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy -- -D warnings
+      - name: Build
+        run: cargo build --verbose
+      - name: Run tests
+        run: cargo test --verbose
+
+  build-binaries:
+    name: "Build binaries"
+    needs: [check-and-test]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: "ubuntu-latest"
+            target: "x86_64-unknown-linux-gnu"
+          - os: "macos-latest"
+            target: "aarch64-apple-darwin"
+          - os: "windows-latest"
+            target: "x86_64-pc-windows-msvc"
+            ext: .exe
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Build
+        run: |
+          cargo build --bin fm-cli --release --locked --verbose --target ${{ matrix.target }}
+          mkdir release
+
+      - name: Echo FM target
+        id: fm
+        run: echo "name=fm-${{ matrix.target }}" >> $GITHUB_OUTPUT
+
+      - name: Bundle release (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          mv "target/${{ matrix.target }}/release/fm-cli.exe" fm-cli.exe
+          7z a fm-${{ matrix.target }}.zip fm-cli.exe
+          mv fm-${{ matrix.target }}.zip release/
+
+      - name: Bundle release (Linux and macOS)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          mv "target/${{ matrix.target }}/release/fm-cli" fm-cli
+          tar -czf fm-${{ matrix.target }}.tar.gz fm-cli
+          mv fm-${{ matrix.target }}.tar.gz release/
+
+      - name: Save release as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: "release-${{ matrix.target }}$"
+          path: release
+
+      - name: Upload binaries to release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          token: ${{ secrets.ACCESS_TOKEN }}
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          fail_on_unmatched_files: true
+          # body: |
+          files: |
+            ./release/*
