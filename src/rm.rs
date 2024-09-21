@@ -1,11 +1,11 @@
 mod ds;
 mod meta;
 
-pub use meta::DataStorageRecord;
+use anyhow::{Context, Result};
+pub use meta::{DataStorageRecord, MetaRecord};
 use std::path::Path;
 use tokio::sync::Mutex;
 
-use crate::error::{Error, Result};
 pub use ds::{build, DataStorage, S3config};
 
 pub struct RM {
@@ -24,11 +24,15 @@ impl RM {
         }
     }
 
-    pub async fn put(&mut self, r#type: &str, cfg: &str) {
-        self.meta.lock().await.put(r#type, cfg);
+    pub async fn ds_put(&mut self, r#type: &str, cfg: &str) {
+        self.meta.lock().await.ds_put(r#type, cfg);
     }
 
-    pub async fn upload(&mut self, dsid: i32, path: &Path, raw: &str) -> Result<meta::MetaRecord> {
+    pub async fn ds_ls(&self) -> Vec<DataStorageRecord> {
+        self.meta.lock().await.ds_ls()
+    }
+
+    pub async fn put(&mut self, dsid: &str, path: &Path, raw: &str) -> Result<MetaRecord> {
         let name = path
             .file_name()
             .and_then(|x| x.to_str())
@@ -40,53 +44,68 @@ impl RM {
             "raw" => name.clone(),
             "gid" => uuid.clone(),
             "gide" => uuid.clone() + "." + path.extension().and_then(|x| x.to_str()).unwrap_or(""),
-            _ => Err(Error::OperationFailed("Unknown raw type".to_string()))?,
+            _ => Err(anyhow::anyhow!("Unknown raw type"))?,
         };
         let desc = meta
-            .get(dsid)?
+            .ds_get(dsid)?
             .lock()
             .await
             .put(raw_name.clone(), path)
             .await
-            .map_err(|x| Error::OperationFailed(x.to_string()))?;
-        let mr = meta::MetaRecord {
+            .with_context(|| "Failed to put")?;
+        let mr = MetaRecord {
             gid: uuid,
-            dsid,
+            dsid: dsid.to_string(),
             name,
             raw: raw_name,
             desc,
         };
-        meta.upload(mr.clone());
+        meta.put(mr.clone());
         Ok(mr)
     }
 
-    pub async fn download(
+    pub async fn get(
         &mut self,
         gid: Option<&str>,
-        dsid: Option<i32>,
+        dsid: Option<&str>,
         name: Option<&str>,
         path: Option<&Path>,
     ) -> Result<()> {
         let mut meta = self.meta.lock().await;
-        let mr = meta.find(gid, dsid, name);
-        let mr = mr
-            .first()
-            .ok_or(Error::OperationFailed("Not found".to_string()))?;
+        let mr = meta.ls(gid, dsid, name);
+        let mr = mr.first().with_context(|| "Not found")?;
 
-        meta.get(mr.dsid)
+        meta.ds_get(&mr.dsid)
             .unwrap()
             .lock()
             .await
             .get(mr.raw.clone(), path)
             .await
-            .map_err(|x| Error::OperationFailed(x.to_string()))?;
+            .with_context(|| "Failed to get")?;
         Ok(())
     }
 
-    pub async fn list(&self) -> Vec<DataStorageRecord> {
-        self.meta.lock().await.list()
+    pub async fn del(&mut self, gid: &str) -> Result<()> {
+        let mut meta = self.meta.lock().await;
+        let mr = meta.ls(Some(gid), None, None);
+        let mr = mr.first().with_context(|| "Not found")?;
+
+        meta.ds_get(&mr.dsid)
+            .unwrap()
+            .lock()
+            .await
+            .del(mr.raw.clone())
+            .await
+            .with_context(|| "Failed to del")?;
+        meta.del(gid);
+        Ok(())
     }
-    pub async fn find(&mut self, dsid: i32) -> Vec<meta::MetaRecord> {
-        self.meta.lock().await.find(None, Some(dsid), None)
+    pub async fn ls(
+        &mut self,
+        gid: Option<&str>,
+        dsid: Option<&str>,
+        name: Option<&str>,
+    ) -> Vec<MetaRecord> {
+        self.meta.lock().await.ls(gid, dsid, name)
     }
 }

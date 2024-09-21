@@ -29,6 +29,26 @@ fn load_or_default(path: &str) -> Config {
     }
 }
 
+fn print_meta(meta: &Vec<MetaRecord>) {
+    println!(
+        "{: <40} {: <10} {: <10} {: <40} {: <10}",
+        "gid", "dsid", "name", "raw", "desc"
+    );
+    for MetaRecord {
+        gid,
+        dsid,
+        name,
+        raw,
+        desc,
+    } in meta
+    {
+        println!(
+            "{: <40} {: <10} {: <10} {: <40} {: <10}",
+            gid, dsid, name, raw, desc
+        );
+    }
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
@@ -38,20 +58,28 @@ async fn main() {
         .arg_required_else_help(true)
         .subcommands(&[
             Command::new("init").about("Initialize the database"),
+            Command::new("ds")
+                .about("Data storage commands")
+                .subcommands(&[
+                    Command::new("list")
+                        .visible_alias("ls")
+                        .about("List data storages"),
+                    Command::new("put")
+                        .about("Put a data storage")
+                        .subcommands(&[Command::new("s3").about("Put an S3 data storage").args(&[
+                            arg!(<region> "The S3 region"),
+                            arg!(<endpoint> "The S3 endpoint"),
+                            arg!(<access_key> "The S3 access key"),
+                            arg!(<secret_key> "The S3 secret key"),
+                            arg!(<bucket> "The S3 bucket"),
+                        ])])
+                        .subcommand_required(true),
+                ])
+                .arg_required_else_help(true)
+                .subcommand_required(true),
             Command::new("put")
                 .visible_alias("p")
                 .about("Put something")
-                .subcommands(&[Command::new("s3").about("Put an S3 datastore").args(&[
-                    arg!(<region> "The S3 region"),
-                    arg!(<endpoint> "The S3 endpoint"),
-                    arg!(<access_key> "The S3 access key"),
-                    arg!(<secret_key> "The S3 secret key"),
-                    arg!(<bucket> "The S3 bucket"),
-                ])])
-                .subcommand_required(true),
-            Command::new("upload")
-                .visible_alias("u")
-                .about("Put a file")
                 .args(&[
                     arg!(-r --raw [raw] "The raw data").value_parser(["gid", "gide"]),
                     arg!(<datastore_id> "The datastore ID"),
@@ -59,8 +87,8 @@ async fn main() {
                         .value_hint(clap::ValueHint::AnyPath)
                         .value_parser(clap::value_parser!(std::path::PathBuf)),
                 ]),
-            Command::new("download")
-                .visible_alias("d")
+            Command::new("get")
+                .visible_alias("g")
                 .about("Get a file")
                 .args(&[
                     arg!(-g --gid [gid] "The gid of the file"),
@@ -74,19 +102,33 @@ async fn main() {
                     clap::ArgGroup::new("download")
                         .args(["datastore_id", "gid", "path"])
                         .multiple(true),
-                ),
+                )
+                .arg_required_else_help(true),
+            Command::new("del")
+                .visible_alias("d")
+                .about("Delete a file")
+                .args(&[
+                    arg!(-g --gid [gid] "The gid of the file"),
+                    arg!(-d --datastore_id [datastore_id] "The datastore ID"),
+                    arg!(-n --name [name] "The name of the file"),
+                ])
+                .group(
+                    clap::ArgGroup::new("delete")
+                        .args(["datastore_id", "gid", "name"])
+                        .multiple(true),
+                )
+                .arg_required_else_help(true),
             Command::new("list")
-                .visible_alias("ls")
-                .about("List datastores")
-                .help_expected(true)
+                .visible_alias("l")
+                .about("List files")
                 .arg(arg!(-i [datastore_id]"The datastore ID")),
         ])
-        .arg(arg!(-c [config] "The configuration file"))
+        .arg(arg!(-c [config] "The configuration file").value_hint(clap::ValueHint::FilePath))
         .get_matches();
     let config = load_or_default(
         &cmd.get_one::<String>("config")
             .cloned()
-            .unwrap_or(HOME.clone() + "/.config/rm/config.json"),
+            .unwrap_or(HOME.clone() + "/.config/rm/config.toml"),
     );
 
     if cmd.subcommand_matches("init").is_some() {
@@ -96,32 +138,39 @@ async fn main() {
 
     let mut rm = RM::new(&config.r#type, &config.config);
     match cmd.subcommand() {
-        Some(("put", put)) => {
-            if let Some(("s3", s3)) = put.subcommand() {
-                rm.put(
-                    "s3",
-                    &serde_json::to_string(&S3config {
-                        region: s3.get_one::<String>("region").unwrap().to_string(),
-                        endpoint: s3.get_one::<String>("endpoint").unwrap().to_string(),
-                        access_key: s3.get_one::<String>("access_key").unwrap().to_string(),
-                        secret_key: s3.get_one::<String>("secret_key").unwrap().to_string(),
-                        bucket: s3.get_one::<String>("bucket").unwrap().to_string(),
-                    })
-                    .expect("Failed to serialize"),
-                )
-                .await;
+        Some(("ds", ds)) => match ds.subcommand() {
+            Some(("list", _)) => {
+                println!("{: <10} {: <10} {: <10}", "id", "type", "config");
+                for DataStorageRecord { id, r#type, cfg } in rm.ds_ls().await {
+                    println!("{: <10} {: <10} {: <10}", id, r#type, cfg);
+                }
             }
-        }
-        Some(("upload", file)) => {
-            let datastore_id = file.get_one::<String>("datastore_id").unwrap();
-            let path = file.get_one::<std::path::PathBuf>("path").unwrap();
+            Some(("put", put)) => {
+                if let Some(("s3", s3)) = put.subcommand() {
+                    rm.ds_put(
+                        "s3",
+                        &serde_json::to_string(&S3config {
+                            region: s3.get_one::<String>("region").cloned().unwrap(),
+                            endpoint: s3.get_one::<String>("endpoint").cloned().unwrap(),
+                            access_key: s3.get_one::<String>("access_key").cloned().unwrap(),
+                            secret_key: s3.get_one::<String>("secret_key").cloned().unwrap(),
+                            bucket: s3.get_one::<String>("bucket").cloned().unwrap(),
+                        })
+                        .expect("Failed to serialize"),
+                    )
+                    .await;
+                }
+            }
+            _ => {}
+        },
+        Some(("put", put)) => {
+            let datastore_id = put.get_one::<String>("datastore_id").unwrap();
+            let path = put.get_one::<std::path::PathBuf>("path").unwrap();
             let info = rm
-                .upload(
-                    datastore_id
-                        .parse()
-                        .expect("Failed to parse datastore ID as i32"),
+                .put(
+                    datastore_id,
                     path,
-                    file.get_one::<String>("raw")
+                    put.get_one::<String>("raw")
                         .map(|x| x.as_str())
                         .unwrap_or("raw"),
                 )
@@ -129,39 +178,51 @@ async fn main() {
                 .unwrap();
             println!("name: {}, discription: {}", info.name, info.desc);
         }
-        Some(("download", file)) => {
-            rm.download(
-                file.get_one::<String>("gid").map(|x| x.as_str()),
-                file.get_one::<String>("datastore_id")
-                    .map(|x| x.parse().unwrap()),
-                file.get_one::<String>("name").map(|x| x.as_str()),
-                file.get_one::<std::path::PathBuf>("path")
-                    .map(|x| x.as_path()),
-            )
-            .await
-            .unwrap();
+        Some(("get", get)) => {
+            let mrv = rm
+                .ls(
+                    get.get_one::<String>("gid").map(|x| x.as_str()),
+                    get.get_one::<String>("datastore_id").map(|x| x.as_str()),
+                    get.get_one::<String>("name").map(|x| x.as_str()),
+                )
+                .await;
+            if mrv.is_empty() {
+                println!("No such file");
+            } else if mrv.len() > 1 {
+                print_meta(&mrv);
+            } else {
+                let info = &mrv[0];
+                rm.get(
+                    Some(&info.gid),
+                    Some(&info.dsid),
+                    Some(&info.name),
+                    get.get_one::<std::path::PathBuf>("path")
+                        .map(|x| x.as_path()),
+                )
+                .await
+                .expect("Failed to get");
+            }
         }
-        Some(("list", list)) => match list.get_one::<String>("datastore_id") {
-            Some(datastore_id) => {
-                println!("{: <10} {: <10}", "name", "discription");
-                for info in rm
-                    .find(
-                        datastore_id
-                            .parse()
-                            .expect("Failed to parse datastore ID as i32"),
-                    )
-                    .await
-                {
-                    println!("{: <10} {: <10}", info.name, info.desc);
-                }
+        Some(("del", del)) => {
+            let mrv = rm
+                .ls(
+                    del.get_one::<String>("gid").map(|x| x.as_str()),
+                    del.get_one::<String>("datastore_id").map(|x| x.as_str()),
+                    del.get_one::<String>("name").map(|x| x.as_str()),
+                )
+                .await;
+            if mrv.is_empty() {
+                println!("No such file");
+            } else if mrv.len() > 1 {
+                print_meta(&mrv);
+            } else {
+                rm.del(&mrv[0].gid).await.expect("Failed to delete");
             }
-            _ => {
-                println!("{: <10} {: <10} {: <10}", "id", "type", "config");
-                for DataStorageRecord { id, r#type, cfg } in rm.list().await {
-                    println!("{: <10} {: <10} {: <10}", id, r#type, cfg);
-                }
-            }
-        },
+        }
+        Some(("list", list)) => {
+            let datastore_id = list.get_one::<String>("datastore_id");
+            print_meta(&rm.ls(None, datastore_id.map(|x| x.as_str()), None).await);
+        }
         _ => {}
     }
 }

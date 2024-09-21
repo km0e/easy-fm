@@ -1,54 +1,19 @@
-use std::{
-    ops::{Deref, DerefMut},
-    path::Path,
-    sync::Arc,
-};
-
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-pub enum PutError {
-    #[error("Failed to load file: {0}")]
-    FileError(String),
-    #[error("Failed to put object: {0}")]
-    GenericError(String),
-}
+use std::path::Path;
 
 #[async_trait::async_trait]
 pub trait DataStorage {
+    /// Get file from storage
     async fn get(&self, name: String, path: Option<&Path>) -> Result<()>;
-    async fn put(&self, name: String, path: &Path) -> Result<String, PutError>;
-}
-
-#[derive(Clone)]
-pub struct SafeDs(Arc<Mutex<Box<dyn DataStorage>>>);
-
-impl SafeDs {
-    pub fn new(ds: Box<dyn DataStorage>) -> Self {
-        Self(Arc::new(Mutex::new(ds)))
-    }
-}
-
-impl Deref for SafeDs {
-    type Target = Arc<Mutex<Box<dyn DataStorage>>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for SafeDs {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
+    /// Put file to storage
+    async fn put(&self, name: String, path: &Path) -> Result<String>;
+    /// delete file from storage
+    async fn del(&self, name: String) -> Result<()>;
 }
 
 mod s3;
 
+use anyhow::Result;
 pub use s3::S3config;
-use tokio::sync::Mutex;
-
-use crate::error::Result;
 
 pub fn build(r#type: &str, config: &str) -> Result<Box<dyn DataStorage>, serde_json::Error> {
     match r#type {
@@ -59,3 +24,7 @@ pub fn build(r#type: &str, config: &str) -> Result<Box<dyn DataStorage>, serde_j
         _ => panic!("Unknown type"),
     }
 }
+
+mod safe;
+
+pub use safe::SafeDs;

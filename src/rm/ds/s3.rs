@@ -1,8 +1,10 @@
 use std::{fs::File, io::Write, path::Path};
 
-use crate::error::{Error, Result};
+use anyhow::{Context, Result};
 
-use super::{DataStorage, PutError};
+use crate::error::Error;
+
+use super::DataStorage;
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct S3config {
@@ -53,24 +55,22 @@ impl DataStorage for S3 {
             .key(name)
             .send()
             .await
-            .map_err(|err| {
-                Error::OperationFailed(format!("Failed to get object from S3: {err:?}"))
-            })?;
-        while let Some(bytes) = object.body.try_next().await.map_err(|err| {
-            Error::OperationFailed(format!("Failed to read from S3 download stream: {err:?}"))
-        })? {
-            file.write_all(&bytes).map_err(|err| {
-                Error::FileError(format!(
-                    "Failed to write from S3 download stream to local file: {err:?}"
-                ))
-            })?;
+            .with_context(|| "Failed to get object from S3")?;
+        while let Some(bytes) = object
+            .body
+            .try_next()
+            .await
+            .with_context(|| "Failed to read from S3 download stream")?
+        {
+            file.write_all(&bytes)
+                .with_context(|| "Failed to write from S3 download stream to local file")?;
         }
         Ok(())
     }
-    async fn put(&self, name: String, path: &Path) -> Result<String, PutError> {
+    async fn put(&self, name: String, path: &Path) -> Result<String> {
         let body = aws_sdk_s3::primitives::ByteStream::from_path(path)
             .await
-            .map_err(|e| PutError::FileError(e.to_string()))?;
+            .map_err(|e| Error::FileError(e.to_string()))?;
         let file_link =
             self.config.endpoint.clone() + "/" + self.config.bucket.as_str() + "/" + name.as_str();
         let _ = self
@@ -81,7 +81,18 @@ impl DataStorage for S3 {
             .body(body)
             .send()
             .await
-            .map_err(|e| PutError::GenericError(e.to_string()))?;
+            .with_context(|| "Failed to put object to S3")?;
         Ok(file_link)
+    }
+    async fn del(&self, name: String) -> Result<()> {
+        let _ = self
+            .client
+            .delete_object()
+            .bucket(self.config.bucket.clone())
+            .key(name)
+            .send()
+            .await
+            .with_context(|| "Failed to delete object from S3")?;
+        Ok(())
     }
 }

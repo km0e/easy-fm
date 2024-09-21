@@ -1,9 +1,9 @@
-use crate::error::Result;
+use anyhow::Result;
 
 use super::ds::SafeDs;
 
 pub struct DataStorageRecord {
-    pub id: i32,
+    pub id: String,
     pub r#type: String,
     pub cfg: String,
 }
@@ -11,7 +11,7 @@ pub struct DataStorageRecord {
 #[derive(Clone)]
 pub struct MetaRecord {
     pub gid: String,
-    pub dsid: i32,
+    pub dsid: String,
     pub name: String,
     pub raw: String,
     pub desc: String,
@@ -19,12 +19,13 @@ pub struct MetaRecord {
 
 #[async_trait::async_trait]
 pub trait Meta {
-    fn get(&mut self, dsid: i32) -> Result<SafeDs>;
-    fn put(&mut self, r#type: &str, config: &str);
-    fn list(&self) -> Vec<DataStorageRecord>;
-    fn upload(&mut self, meta: MetaRecord);
-    fn find(&mut self, gid: Option<&str>, dsid: Option<i32>, name: Option<&str>)
-        -> Vec<MetaRecord>;
+    fn ds_get(&mut self, dsid: &str) -> Result<SafeDs>;
+    fn ds_put(&mut self, r#type: &str, config: &str);
+    fn ds_ls(&self) -> Vec<DataStorageRecord>;
+
+    fn put(&mut self, meta: MetaRecord);
+    fn del(&mut self, gid: &str);
+    fn ls(&mut self, gid: Option<&str>, dsid: Option<&str>, name: Option<&str>) -> Vec<MetaRecord>;
 }
 
 pub fn build(r#type: &str, config: &str) -> Result<Box<dyn Meta>, serde_json::Error> {
