@@ -15,7 +15,10 @@ mod s3;
 use anyhow::Result;
 pub use s3::S3config;
 
-pub fn build(r#type: &str, config: &str) -> Result<Box<dyn DataStorage>, serde_json::Error> {
+pub fn build(
+    r#type: &str,
+    config: &str,
+) -> Result<Box<dyn DataStorage + Send + Sync>, serde_json::Error> {
     match r#type {
         "s3" => {
             let config: s3::S3config = serde_json::from_str(config).expect("Failed to deserialize");

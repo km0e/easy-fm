@@ -19,14 +19,14 @@ pub struct MetaRecord {
 
 #[async_trait::async_trait]
 pub trait Meta {
-    fn ds_get(&mut self, dsid: &str) -> Result<SafeDs>;
-    fn ds_put(&mut self, r#type: &str, config: &str);
-    fn ds_del(&mut self, dsid: &str);
+    fn ds_get(&self, dsid: &str) -> Result<SafeDs>;
+    fn ds_put(&self, r#type: &str, config: &str);
+    fn ds_del(&self, dsid: &str);
     fn ds_ls(&self) -> Vec<DataStorageRecord>;
 
-    fn put(&mut self, meta: MetaRecord);
-    fn del(&mut self, gid: &str);
-    fn ls(&mut self, gid: Option<&str>, dsid: Option<&str>, name: Option<&str>) -> Vec<MetaRecord>;
+    fn put(&self, meta: MetaRecord);
+    fn del(&self, gid: &str);
+    fn ls(&self, gid: Option<&str>, dsid: Option<&str>, name: Option<&str>) -> Vec<MetaRecord>;
 }
 
 pub fn build(r#type: &str, config: &str) -> Result<Box<dyn Meta>, serde_json::Error> {

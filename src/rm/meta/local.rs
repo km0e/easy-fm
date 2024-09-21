@@ -1,15 +1,17 @@
+use std::sync::Mutex;
+
 use anyhow::{Context, Result};
 
+use super::{DataStorageRecord, Meta, MetaRecord};
 use crate::{
     error::Error,
     rm::{build, ds::SafeDs},
 };
-
-use super::{DataStorageRecord, Meta, MetaRecord};
+use std::collections::HashMap;
 
 pub struct Local {
     gid_conn: rusqlite::Connection,
-    datastore_conn: std::collections::HashMap<String, SafeDs>,
+    datastore_conn: Mutex<HashMap<String, SafeDs>>,
 }
 
 pub fn init(path: &str) {
@@ -44,15 +46,15 @@ impl Local {
         let conn = rusqlite::Connection::open(path).expect("Failed to open database");
         Self {
             gid_conn: conn,
-            datastore_conn: std::collections::HashMap::new(),
+            datastore_conn: std::sync::Mutex::new(HashMap::new()),
         }
     }
 }
 
 #[async_trait::async_trait]
 impl Meta for Local {
-    fn ds_get(&mut self, dsid: &str) -> Result<SafeDs> {
-        if let Some(cli) = self.datastore_conn.get(dsid) {
+    fn ds_get(&self, dsid: &str) -> Result<SafeDs> {
+        if let Some(cli) = self.datastore_conn.lock().unwrap().get(dsid) {
             return Ok(cli.clone());
         }
         let mut stmt = self
@@ -72,16 +74,18 @@ impl Meta for Local {
         let cli = build(&r#type, &cfg).expect("Failed to build");
         Ok(self
             .datastore_conn
+            .lock()
+            .unwrap()
             .entry(dsid.to_string())
             .or_insert(SafeDs::new(cli))
             .clone())
     }
-    fn ds_put(&mut self, r#type: &str, cfg: &str) {
+    fn ds_put(&self, r#type: &str, cfg: &str) {
         self.gid_conn
             .execute("INSERT INTO rm (type, cfg) VALUES (?, ?)", [r#type, cfg])
             .expect("Failed to insert");
     }
-    fn ds_del(&mut self, dsid: &str) {
+    fn ds_del(&self, dsid: &str) {
         self.gid_conn
             .execute("DELETE FROM rm WHERE id = ?", [dsid])
             .expect("Failed to delete");
@@ -102,7 +106,7 @@ impl Meta for Local {
         .map(|row| row.expect("Failed to get row"))
         .collect()
     }
-    fn put(&mut self, meta: MetaRecord) {
+    fn put(&self, meta: MetaRecord) {
         self.gid_conn
             .execute(
                 "INSERT INTO map (gid, dsid, name, raw, discription) VALUES (?, ?, ?, ?, ?)",
@@ -116,13 +120,13 @@ impl Meta for Local {
             )
             .expect("Failed to insert");
     }
-    fn del(&mut self, gid: &str) {
+    fn del(&self, gid: &str) {
         self.gid_conn
             .execute("DELETE FROM map WHERE gid = ?", [gid])
             .expect("Failed to delete");
     }
 
-    fn ls(&mut self, gid: Option<&str>, dsid: Option<&str>, name: Option<&str>) -> Vec<MetaRecord> {
+    fn ls(&self, gid: Option<&str>, dsid: Option<&str>, name: Option<&str>) -> Vec<MetaRecord> {
         let mut q = "SELECT * FROM map".to_string();
         if gid.is_some() || dsid.is_some() || name.is_some() {
             q = q
