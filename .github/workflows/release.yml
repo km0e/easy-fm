@@ -74,7 +74,7 @@ jobs:
       - name: Save release as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: "release-${{ matrix.target }}$"
+          name: "release-${{ matrix.target }}"
           path: release
 
       - name: Upload binaries to release

@@ -1,15 +1,18 @@
-use std::sync::LazyLock;
+use std::{
+    path::{Path, PathBuf},
+    sync::LazyLock,
+};
 
 use clap::{arg, command, Command};
 use easy_fm::prelude::*;
 use serde::{Deserialize, Serialize};
 
-static HOME: LazyLock<String> = LazyLock::new(|| {
-    let home = home::home_dir().expect("Failed to get home directory");
-    home.to_str()
-        .expect("Failed to convert home directory to string")
-        .to_string()
-});
+static HOME: LazyLock<PathBuf> =
+    LazyLock::new(|| home::home_dir().expect("Failed to get home directory"));
+
+static DEFAULT_CONFIG_DIR: LazyLock<PathBuf> = LazyLock::new(|| HOME.join(".config/easy-fm"));
+static DEFAULT_CONFIG_PATH: LazyLock<PathBuf> =
+    LazyLock::new(|| DEFAULT_CONFIG_DIR.join("config.toml"));
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 struct Config {
@@ -21,13 +24,17 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             r#type: "local".to_string(),
-            config: HOME.clone() + "/.config/rm/local.sqlite3",
+            config: DEFAULT_CONFIG_DIR
+                .join("local.sqlite3")
+                .to_str()
+                .unwrap()
+                .to_string(),
         }
     }
 }
 
-fn load_or_default(path: &str) -> Config {
-    let mut f = xcfg::File::default().path(path);
+fn load_or_default(path: &Path) -> Config {
+    let mut f = xcfg::File::default().path(path.to_str().unwrap());
     if f.load().is_err() {
         Config::default()
     } else {
@@ -140,19 +147,25 @@ async fn main() {
                 .about("List files")
                 .arg(arg!(-i [datastore_id]"The datastore ID")),
         ])
-        .arg(arg!(-c [config] "The configuration file").value_hint(clap::ValueHint::FilePath))
+        .arg(
+            arg!(-c [config] "The configuration file")
+                .default_value(DEFAULT_CONFIG_PATH.as_os_str())
+                .value_hint(clap::ValueHint::FilePath)
+                .value_parser(clap::value_parser!(PathBuf)),
+        )
         .get_matches();
-    let default_path = HOME.clone() + "/.config/rm/config.toml";
     let config = load_or_default(
-        cmd.get_one::<String>("config")
-            .map(|x| x.as_str())
-            .unwrap_or(&default_path),
+        cmd.get_one::<PathBuf>("config")
+            .expect("Failed to get config"),
     );
 
     if let Some(("init", cmd)) = cmd.subcommand() {
-        eprintln!("default_path: {}", default_path);
-        println!();
         if let Some(("default_config", _)) = cmd.subcommand() {
+            eprintln!(
+                "default_path: {}",
+                DEFAULT_CONFIG_PATH.as_os_str().to_str().unwrap()
+            );
+            println!();
             println!("{}", toml::to_string(&Config::default()).unwrap());
             return;
         }
